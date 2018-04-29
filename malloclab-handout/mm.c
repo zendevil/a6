@@ -73,6 +73,10 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    while(ptr) {
+        ptr = 0;
+        ptr++;
+    }
 }
 
 /*
