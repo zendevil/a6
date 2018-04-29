@@ -16,15 +16,7 @@
 #include <string.h>
 
 #include "mm.h"
-#
-
-Before running the TURN_IN script, be sure that you have
-
-    included your full name and email address in the comment at the top of mm.c
-    removed any extraneous print statements
-    included any appropriate commentary on your code in a separate README file or as C comments in mm.c 
-
-University of Rochester, Department of Computer Science include "memlib.h"
+#include "memlib.h"
 
 /*********************************************************
  * NOTE TO STUDENTS: Before you do anything else, please
@@ -32,15 +24,15 @@ University of Rochester, Department of Computer Science include "memlib.h"
  ********************************************************/
 team_t team = {
     /* Team name */
-    "Bois",
+    "ateam",
     /* First member's full name */
-    "Prikshet Sharma",
+    "Harry Bovik",
     /* First member's email address */
-    "pshar10@u.rochester.edu",
+    "bovik@cs.cmu.edu",
     /* Second member's full name (leave blank if none) */
-    "Nathan McCloud",
+    "",
     /* Second member's email address (leave blank if none) */
-    "nmccloud@u.rochester.edu"
+    ""
 };
 
 /* single word (4) or double word (8) alignment */
@@ -67,7 +59,6 @@ int mm_init(void)
 void *mm_malloc(size_t size)
 {
     int newsize = ALIGN(size + SIZE_T_SIZE);
-A
     void *p = mem_sbrk(newsize);
     if (p == (void *)-1)
 	return NULL;
