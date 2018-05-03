@@ -77,7 +77,7 @@ int mm_init(void)
     PUT(heap_listp, 0);
     PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1));
     PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (3*WSIZE), PACK(DSIZE, 1));
+    PUT(heap_listp + (3*WSIZE), PACK(0, 1));
     heap_listp += (2*WSIZE);
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
@@ -100,7 +100,7 @@ static void *extend_heap(size_t words) {
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(size, 0)); //free block header
     PUT(FTRP(bp), PACK(size, 0)); //free block footer
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(size, 1)); // new epilogue header
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); // new epilogue header
 
     /* Coalesce if the previous block was free */
     return coalesce(bp);
@@ -115,7 +115,7 @@ static void *find_fit(size_t asize) {
             return bp;
         }
     return NULL;
-#endif
+
 }
 
 static void place(void *bp, size_t asize) {
@@ -169,13 +169,6 @@ void *mm_malloc(size_t size)
 
 
 
-static int aligned(const void* p) {
-    return ((unsigned long)p % ALIGNMENT) == 0;
-}
-
-static int in_heap(const void* p) {
-    return p <= mem_heap_hi() && p >= mem_heap_lo();
-}
 
 static void *coalesce(void * bp)
 {
@@ -217,13 +210,13 @@ static void *coalesce(void * bp)
 /*
  * mm_free - Freeing a block does nothing.
  */
-void mm_free(void *ptr)
+void mm_free(void *bp)
 {
-    size_t size = GET_SIZE(HDRP(ptr));
+    size_t size = GET_SIZE(HDRP(bp));
 
-    PUT(HDRP(ptr), PACK(size, 0));
-    PUT(FTRP(ptr), PACK(size, 0));
-    coalesce(ptr);
+    PUT(HDRP(bp), PACK(size, 0));
+    PUT(FTRP(bp), PACK(size, 0));
+    coalesce(bp);
 
 }
 
