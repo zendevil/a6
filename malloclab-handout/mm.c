@@ -64,6 +64,26 @@ team_t team = {
 
 static char *heap_listp = 0;
 
+static void *extend_heap(size_t words) {
+    char *bp;
+    size_t size;
+
+    /* Allocate an even number of words to maintain alignment */
+    size = (words % 2) ? (words+1) *WSIZE : words *WSIZE;
+    if((long) (bp = mem_sbrk(size)) == -1) {
+        return NULL;
+    }
+
+    /* Initialize free block header/footer and the epilogue header */
+    PUT(HDRP(bp), PACK(size, 0)); //free block header
+    PUT(FTRP(bp), PACK(size, 0)); //free block footer
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); // new epilogue header
+
+    /* Coalesce if the previous block was free */
+    return coalesce(bp);
+
+}
+
 /* 
  * mm_init - initialize the malloc package.
  */
@@ -126,25 +146,7 @@ static void *coalesce(void * bp)
 }
 
 
-static void *extend_heap(size_t words) {
-    char *bp;
-    size_t size;
 
-    /* Allocate an even number of words to maintain alignment */
-    size = (words % 2) ? (words+1) *WSIZE : words *WSIZE;
-    if((long) (bp = mem_sbrk(size)) == -1) {
-        return NULL;
-    }
-
-    /* Initialize free block header/footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 0)); //free block header
-    PUT(FTRP(bp), PACK(size, 0)); //free block footer
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); // new epilogue header
-
-    /* Coalesce if the previous block was free */
-    return coalesce(bp);
-
-}
 
 static void *find_fit(size_t asize) {
     /* first fit search */
