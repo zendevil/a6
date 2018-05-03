@@ -1,9 +1,9 @@
 #include <stdio.h>
 
-extern static int mm_init (void);
-extern static void *mm_malloc (size_t size);
-extern static void mm_free (void *ptr);
-extern static void *mm_realloc(void *ptr, size_t size);
+static int mm_init (void);
+static void *mm_malloc (size_t size);
+static void mm_free (void *ptr);
+static void *mm_realloc(void *ptr, size_t size);
 
 
 /* 
