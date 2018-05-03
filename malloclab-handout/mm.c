@@ -737,7 +737,7 @@ static void checktree(block_ptr node)
 /* 
  * checkheap - check the heap for consistency 
  */
-void mm_checkheap(int verbose)
+static void mm_checkheap(int verbose)
 {
     char *bp = heap_listp;
 
