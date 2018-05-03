@@ -23,10 +23,10 @@
 typedef void *block_ptr;
 
 /* Global var and data structure pointers */
-static char *heap_listp = 0;        /* Pointer to first block */
-static block_ptr larger_bin_root;   /* Root of the BST which contains larger blocks */
-static block_ptr *bins;             /* Array of the headers of segregated free lists */
-static const unsigned int fixed_bin_count = 5;  /* Number of segregated free lists */
+static char *heap_listp = 0;		/* Pointer to first block */
+static block_ptr larger_bin_root;	/* Root of the BST which contains larger blocks */
+static block_ptr *bins;				/* Array of the headers of segregated free lists */
+static const unsigned int fixed_bin_count = 5;	/* Number of segregated free lists */
 #ifdef DEBUG
 static int operid;
 #endif
@@ -46,50 +46,50 @@ static void printtree(block_ptr node, int depth);
 /* Macros and utility inline functions */
 
 /* Single word (4) or double word (8) alignment */
-#define ALIGNMENT   8
+#define ALIGNMENT	8
 
 /* Round size up to ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
+#define ALIGN(size)	(((size) + (ALIGNMENT - 1)) & ~0x7)
 
 /* Basic constants */
-#define WSIZE       4           /* Word and header/footer size (bytes) */
-#define DSIZE       8           /* Doubleword size (bytes) */
-#define BLOCKSIZE   (1 << 6)  /* Extend heap by this amount (bytes) */
+#define WSIZE		4			/* Word and header/footer size (bytes) */
+#define DSIZE		8			/* Doubleword size (bytes) */
+#define BLOCKSIZE	(1 << 6)	/* Extend heap by this amount (bytes) */
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
 
 /* Pack a size and allocated bit into a word */
-#define PACK(size, alloc)   ((size) | (alloc))
+#define PACK(size, alloc)	((size) | (alloc))
 
 /* Read and write a word at address p */
-#define GET(p)              (*(unsigned int *)(p))
-#define PUTTRUNC(p, val)    (GET(p) = (val))
+#define GET(p)				(*(unsigned int *)(p))
+#define PUTTRUNC(p, val)	(GET(p) = (val))
 
 /* Write header info at address p without modifying prev_alloc */
-#define PUT(p, val)         (GET(p) = (GET(p) & 0x2) | (val))
+#define PUT(p, val)			(GET(p) = (GET(p) & 0x2) | (val))
 
 /* Read the size and allocated fields from address p */
-#define GET_SIZE(p)         (GET(p) & ~0x7)
-#define GET_ALLOC(p)        (GET(p) & 0x1)
+#define GET_SIZE(p)			(GET(p) & ~0x7)
+#define GET_ALLOC(p)		(GET(p) & 0x1)
 
 /* Given block ptr bp, compute address of its header and footer */
-#define HDRP(bp)            ((char *)(bp) - WSIZE)
-#define FTRP(bp)            ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
+#define HDRP(bp)			((char *)(bp) - WSIZE)
+#define FTRP(bp)			((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
 
 /* Given block ptr bp, compute address of next and previous blocks */
-#define NEXT_BLKP(bp)       ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
-#define PREV_BLKP(bp)       ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
+#define NEXT_BLKP(bp)		((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
+#define PREV_BLKP(bp)		((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 /* Given block ptr bp, set next block's prev_alloc */
-#define SET_ALLOC(bp)       (GET(HDRP(NEXT_BLKP(bp))) |= 0x2)
-#define SET_UNALLOC(bp)     (GET(HDRP(NEXT_BLKP(bp))) &= ~0x2)
+#define SET_ALLOC(bp)		(GET(HDRP(NEXT_BLKP(bp))) |= 0x2)
+#define SET_UNALLOC(bp)		(GET(HDRP(NEXT_BLKP(bp))) &= ~0x2)
 
 /* Given block ptr bp, get prev_alloc */
-#define GET_PREV_ALLOC(bp)  (GET(HDRP(bp)) & 0x2)
+#define GET_PREV_ALLOC(bp)	(GET(HDRP(bp)) & 0x2)
 
 /* Given a freed block ptr bp, compute 'address' of next and previous blocks of same size */
-#define NEXT_SAMESZ_BLKP(bp)    (*(unsigned int *)(bp))
-#define PREV_SAMESZ_BLKP(bp)    (*(unsigned int *)((char *)(bp) + WSIZE))
+#define NEXT_SAMESZ_BLKP(bp)	(*(unsigned int *)(bp))
+#define PREV_SAMESZ_BLKP(bp)	(*(unsigned int *)((char *)(bp) + WSIZE))
 
 #define WNULL 0U
 
@@ -108,40 +108,40 @@ static inline unsigned int ptr_to_word(block_ptr p)
 /* The following are macros for BST node blocks */
 
 /* Check if this block is large enough to be a BST node */
-#define IS_OVER_BST_SIZE(size)  ((size) > DSIZE * fixed_bin_count)
-#define IS_BST_NODE(bp)         (IS_OVER_BST_SIZE(GET_SIZE(HDRP(bp))))
+#define IS_OVER_BST_SIZE(size)	((size) > DSIZE * fixed_bin_count)
+#define IS_BST_NODE(bp)			(IS_OVER_BST_SIZE(GET_SIZE(HDRP(bp))))
 
 /* Given BST block ptr bp, compute address of its left child or right child */
-#define LCHLD_BLKPREF(bp)       ((block_ptr *)((char *)(bp) + DSIZE))
-#define RCHLD_BLKPREF(bp)       ((block_ptr *)((char *)(bp) + DSIZE * 2))
+#define LCHLD_BLKPREF(bp)		((block_ptr *)((char *)(bp) + DSIZE))
+#define RCHLD_BLKPREF(bp)		((block_ptr *)((char *)(bp) + DSIZE * 2))
 
 /* Crap-like triple pointer > < */
-#define PARENT_CHLDSLOTPREF(bp) ((block_ptr **)((char *)(bp) + DSIZE * 3))
+#define PARENT_CHLDSLOTPREF(bp)	((block_ptr **)((char *)(bp) + DSIZE * 3))
 
 #define LCHLD_BLKP(bp) (*LCHLD_BLKPREF(bp))
 #define RCHLD_BLKP(bp) (*RCHLD_BLKPREF(bp))
 #define PARENT_CHLDSLOTP(bp) (*PARENT_CHLDSLOTPREF(bp))
 
 /* Reset the fields of a free block bp */
-#define reset_block(bp)                                                     \
-{                                                                           \
-    NEXT_SAMESZ_BLKP(bp) = WNULL;                                           \
-    PREV_SAMESZ_BLKP(bp) = WNULL;                                           \
-    if (IS_BST_NODE(bp))                                                    \
-    {                                                                       \
-        LCHLD_BLKP(bp) = NULL;                                              \
-        RCHLD_BLKP(bp) = NULL;                                              \
-        PARENT_CHLDSLOTP(bp) = NULL;                                        \
-    }                                                                       \
+#define reset_block(bp)														\
+{																			\
+	NEXT_SAMESZ_BLKP(bp) = WNULL;											\
+	PREV_SAMESZ_BLKP(bp) = WNULL;											\
+	if (IS_BST_NODE(bp))													\
+	{																		\
+		LCHLD_BLKP(bp) = NULL;												\
+		RCHLD_BLKP(bp) = NULL;												\
+		PARENT_CHLDSLOTP(bp) = NULL;										\
+	}																		\
 }
 
 /* Remove bp from its free list */
-#define remove_linked_freed_block(bp)                                               \
-{                                                                                   \
-    if (PREV_SAMESZ_BLKP(bp))                                                       \
-        NEXT_SAMESZ_BLKP(word_to_ptr(PREV_SAMESZ_BLKP(bp))) = NEXT_SAMESZ_BLKP(bp); \
-    if (NEXT_SAMESZ_BLKP(bp))                                                       \
-        PREV_SAMESZ_BLKP(word_to_ptr(NEXT_SAMESZ_BLKP(bp))) = PREV_SAMESZ_BLKP(bp); \
+#define remove_linked_freed_block(bp)												\
+{																					\
+	if (PREV_SAMESZ_BLKP(bp))														\
+		NEXT_SAMESZ_BLKP(word_to_ptr(PREV_SAMESZ_BLKP(bp))) = NEXT_SAMESZ_BLKP(bp);	\
+	if (NEXT_SAMESZ_BLKP(bp))														\
+		PREV_SAMESZ_BLKP(word_to_ptr(NEXT_SAMESZ_BLKP(bp))) = PREV_SAMESZ_BLKP(bp);	\
 }
 
 static inline void remove_freed_block(block_ptr bp)
@@ -266,18 +266,18 @@ int mm_init(void)
     memset(bins, 0, fixed_bin_count * sizeof(block_ptr));
     heap_listp = (char *)ALIGN((unsigned long)(bins + fixed_bin_count));
     larger_bin_root = NULL;
-    PUTTRUNC(heap_listp, 0);                            /* Alignment padding */
+    PUTTRUNC(heap_listp, 0);							/* Alignment padding */
     PUTTRUNC(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); /* Prologue header */
     PUTTRUNC(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
-    PUTTRUNC(heap_listp + (3 * WSIZE), PACK(0, 1));     /* Epilogue header */
+    PUTTRUNC(heap_listp + (3 * WSIZE), PACK(0, 1));		/* Epilogue header */
     heap_listp += (2 * WSIZE);
     SET_ALLOC(heap_listp);
 #ifdef DEBUG
     {
-        printblock(heap_listp);
-        checkblock(heap_listp);
-    }
-    operid = 0;
+		printblock(heap_listp);
+		checkblock(heap_listp);
+	}
+	operid = 0;
 #endif
     return 0;
 }
@@ -316,10 +316,10 @@ block_ptr malloc(size_t size)
     {
 #ifdef DEBUG
         {
-            puts("Found fit!");
-            checkblock(bp);
-            printblock(bp);
-        }
+			puts("Found fit!");
+			checkblock(bp);
+			printblock(bp);
+		}
 #endif
         place(bp, asize);
         return bp;
@@ -345,9 +345,9 @@ void free(block_ptr ptr)
 
 #ifdef DEBUG
     {
-        printf("\nFree request: ptr = %p \033[41;37m[ID:%d]\033[0m\n", ptr, operid++);
-        printblock(ptr);
-    }
+		printf("\nFree request: ptr = %p \033[41;37m[ID:%d]\033[0m\n", ptr, operid++);
+		printblock(ptr);
+	}
 #endif
 
     size = GET_SIZE(HDRP(ptr));
@@ -488,10 +488,10 @@ static block_ptr extend_heap(size_t words)
 #endif
 
     /* Initialize free block header/footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 0));           /* Free block header */
-    PUT(FTRP(bp), PACK(size, 0));           /* Free block footer */
+    PUT(HDRP(bp), PACK(size, 0));			/* Free block header */
+    PUT(FTRP(bp), PACK(size, 0));			/* Free block footer */
     reset_block(bp);
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));   /* New epilogue header */
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));	/* New epilogue header */
 
     /* Coalesce if the previous block was free */
     return coalesce(bp);
@@ -499,7 +499,7 @@ static block_ptr extend_heap(size_t words)
 
 /*
  * place - Place block of asize bytes at start of free block bp
- *       and split if remainder would be at least minimum block size
+ *		 and split if remainder would be at least minimum block size
  */
 static void place(block_ptr bp, size_t asize)
 {
@@ -518,9 +518,9 @@ static void place(block_ptr bp, size_t asize)
         insert_free_block(bp, delta);
 #ifdef DEBUG
         {
-            printf("Block with size %zu remains a block:\n", asize);
-            printblock(bp);
-        }
+			printf("Block with size %zu remains a block:\n", asize);
+			printblock(bp);
+		}
 #endif
     }
     else
@@ -581,9 +581,9 @@ static void insert_free_block(block_ptr bp, size_t blocksize)
     PARENT_CHLDSLOTP(bp) = new;
 #ifdef DEBUG
     {
-        printf("Inserting a block: ");
-        printblock(bp);
-    }
+		printf("Inserting a block: ");
+		printblock(bp);
+	}
 #endif
 }
 
@@ -618,9 +618,9 @@ static block_ptr find_fit(size_t asize)
     /* Found a best-fit block! LOL */
 #ifdef DEBUG
     if ((*blocks = word_to_ptr(NEXT_SAMESZ_BLKP(curr))) == NULL)
-    {
-        printf("** All blocks with size %u (request: %zu) deleted.\n", GET_SIZE(HDRP(curr)), asize);
-    }
+	{
+		printf("** All blocks with size %u (request: %zu) deleted.\n", GET_SIZE(HDRP(curr)), asize);
+	}
 #else
     /* Set the node to the next same size block if it has */
     *blocks = word_to_ptr(NEXT_SAMESZ_BLKP(curr));
