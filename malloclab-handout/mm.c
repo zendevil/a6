@@ -14,7 +14,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <string.h>
-#include <sys/param.h>
+
 
 #include "mm.h"
 #include "memlib.h"
@@ -36,7 +36,7 @@ team_t team = {
     "nmccloud@u.rochester.edu"
 };
 
-
+#define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define WSIZE 4
 #define DSIZE 8
 //given block pointer, compute address of its header and footer.
