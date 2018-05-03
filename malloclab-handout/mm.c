@@ -240,7 +240,7 @@ static inline void remove_freed_block(block_ptr bp)
 /* 
  * bestfit_search - search for a block with requested size or larger in BST. 
  */
-static block_ptr *bestfit_search(block_ptr *node, size_t size, int specific)
+block_ptr *bestfit_search(block_ptr *node, size_t size, int specific)
 {
     block_ptr *candidate, curr = *node;
     size_t curr_size;
@@ -285,7 +285,7 @@ static inline int aligned(const block_ptr p)
 /* 
  * Initialize: return -1 on error, 0 on success. 
  */
-static int mm_init(void)
+int mm_init(void)
 {
     /* Create the initial empty heap */
     if ((bins = mem_sbrk(
@@ -314,7 +314,7 @@ static int mm_init(void)
 /* 
  * malloc 
  */
-static block_ptr mm_malloc(size_t size)
+block_ptr mm_malloc(size_t size)
 {
     size_t asize;      /* Adjusted block size */
     size_t extendsize; /* Amount to extend heap if no fit */
@@ -391,7 +391,7 @@ void mm_free(block_ptr ptr)
 /* 
  * mm_realloc - I don't want to look at mm-naive.c
  */
-static block_ptr mm_realloc(block_ptr oldptr, size_t size)
+block_ptr mm_realloc(block_ptr oldptr, size_t size)
 {
     size_t oldsize;
     block_ptr newptr;
@@ -434,7 +434,7 @@ static block_ptr mm_realloc(block_ptr oldptr, size_t size)
 /* 
  * coalesce - Boundary tag coalescing. Return ptr to coalesced block 
  */
-static block_ptr coalesce(block_ptr bp)
+block_ptr coalesce(block_ptr bp)
 {
 
     block_ptr prev, next = NEXT_BLKP(bp);
@@ -485,7 +485,7 @@ static block_ptr coalesce(block_ptr bp)
 /* 
  * extend_heap - Extend heap with free block and return its block pointer 
  */
-static block_ptr extend_heap(size_t words)
+block_ptr extend_heap(size_t words)
 {
     char *bp;
     size_t size;
@@ -603,7 +603,7 @@ static void insert_free_block(block_ptr bp, size_t blocksize)
  * find_fit - Find a fit for a block with asize bytes 
  * asize should be duplicate of double word 
  */
-static block_ptr find_fit(size_t asize)
+block_ptr find_fit(size_t asize)
 {
     block_ptr curr, *blocks;
     size_t dcount = asize / DSIZE;
@@ -737,7 +737,7 @@ static void checktree(block_ptr node)
 /* 
  * checkheap - check the heap for consistency 
  */
-static void mm_checkheap(int verbose)
+void mm_checkheap(int verbose)
 {
     char *bp = heap_listp;
 
