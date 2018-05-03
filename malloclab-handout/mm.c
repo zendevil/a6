@@ -44,7 +44,7 @@ team_t team = {
 
 #define FTRP(bp)            ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
 #define CHUNKSIZE (1<<12)
-#define PUT(p, val) 
+#define PUT(p, val) (*(unsigned int *)(p) = (val))
 #define GET(p) (*(unsigned int *) (p))
 #define GET_SIZE(p) (GET(p) && ~0x7)
 
