@@ -240,7 +240,7 @@ static inline void remove_freed_block(block_ptr bp)
 /* 
  * bestfit_search - search for a block with requested size or larger in BST. 
  */
-block_ptr *bestfit_search(block_ptr *node, size_t size, int specific)
+static block_ptr *bestfit_search(block_ptr *node, size_t size, int specific)
 {
     block_ptr *candidate, curr = *node;
     size_t curr_size;
@@ -285,7 +285,7 @@ static inline int aligned(const block_ptr p)
 /* 
  * Initialize: return -1 on error, 0 on success. 
  */
-int mm_init(void)
+static int mm_init(void)
 {
     /* Create the initial empty heap */
     if ((bins = mem_sbrk(
@@ -314,7 +314,7 @@ int mm_init(void)
 /* 
  * malloc 
  */
-block_ptr mm_malloc(size_t size)
+static block_ptr mm_malloc(size_t size)
 {
     size_t asize;      /* Adjusted block size */
     size_t extendsize; /* Amount to extend heap if no fit */
@@ -391,7 +391,7 @@ void mm_free(block_ptr ptr)
 /* 
  * mm_realloc - I don't want to look at mm-naive.c
  */
-block_ptr mm_realloc(block_ptr oldptr, size_t size)
+static block_ptr mm_realloc(block_ptr oldptr, size_t size)
 {
     size_t oldsize;
     block_ptr newptr;
