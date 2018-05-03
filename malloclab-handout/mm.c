@@ -1,466 +1,765 @@
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
-#include <unistd.h>
 #include <string.h>
+#include <unistd.h>
+
+/* Other helper headers */
+#include <linux/kernel.h>
+#include <linux/stddef.h>
 
 #include "mm.h"
 #include "memlib.h"
 
-/* Basic constants and macros */
-#define WSIZE 4 	/* Word and header/footer size (bytes) */
-#define DSIZE 8 	/* Double word size (bytes) */
-#define CHUNKSIZE (1<<12) 	/* Extend heap by this amount (bytes) */
+/* do not change the following! */
+#ifdef DRIVER
+/* create aliases for driver tests */
+#define malloc mm_malloc
+#define free mm_free
+#define realloc mm_realloc
+#define calloc mm_calloc
+#endif /* def DRIVER */
 
-#define MAX(x, y) ((x) > (y) ? (x) : (y))
+typedef void *block_ptr;
 
-/* Pack a size and allocated bit into  word */
-#define PACK(size, alloc) ((size) | (alloc))
+/* Global var and data structure pointers */
+static char *heap_listp = 0;        /* Pointer to first block */
+static block_ptr larger_bin_root;   /* Root of the BST which contains larger blocks */
+static block_ptr *bins;             /* Array of the headers of segregated free lists */
+static const unsigned int fixed_bin_count = 5;  /* Number of segregated free lists */
+#ifdef DEBUG
+static int operid;
+#endif
+
+/* Function prototypes */
+static block_ptr coalesce(block_ptr bp);
+static block_ptr extend_heap(size_t words);
+static void place(block_ptr bp, size_t asize);
+static void insert_free_block(block_ptr bp, size_t blocksize);
+static void printblock(block_ptr bp);
+static void checkblock(block_ptr bp);
+static block_ptr find_fit(size_t asize);
+#ifdef DEBUG
+static void printtree(block_ptr node, int depth);
+#endif
+
+/* Macros and utility inline functions */
+
+/* Single word (4) or double word (8) alignment */
+#define ALIGNMENT   8
+
+/* Round size up to ALIGNMENT */
+#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
+
+/* Basic constants */
+#define WSIZE       4           /* Word and header/footer size (bytes) */
+#define DSIZE       8           /* Doubleword size (bytes) */
+#define BLOCKSIZE   (1 << 6)  /* Extend heap by this amount (bytes) */
+
+#define MAX(x, y) ((x) > (y)? (x) : (y))
+
+/* Pack a size and allocated bit into a word */
+#define PACK(size, alloc)   ((size) | (alloc))
 
 /* Read and write a word at address p */
-#define GET(p) (*(unsigned int *)(p))
-#define PUT(p, val) (*(unsigned int *)(p) = (val))
+#define GET(p)              (*(unsigned int *)(p))
+#define PUTTRUNC(p, val)    (GET(p) = (val))
 
-/* Read and write a pointer at address p */
-#define GET_PTR(p) ((unsigned int *)(long)(GET(p)))
-#define PUT_PTR(p, ptr) (*(unsigned int *)(p) = ((long)ptr))
+/* Write header info at address p without modifying prev_alloc */
+#define PUT(p, val)         (GET(p) = (GET(p) & 0x2) | (val))
 
 /* Read the size and allocated fields from address p */
-#define GET_SIZE(p) (GET(p) & ~0x7)
-#define GET_ALLOC(p) (GET(p) & 0x1)
+#define GET_SIZE(p)         (GET(p) & ~0x7)
+#define GET_ALLOC(p)        (GET(p) & 0x1)
 
 /* Given block ptr bp, compute address of its header and footer */
-#define HDRP(bp) ((char *)(bp) - WSIZE)
-#define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
+#define HDRP(bp)            ((char *)(bp) - WSIZE)
+#define FTRP(bp)            ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
 
 /* Given block ptr bp, compute address of next and previous blocks */
-#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
-#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
+#define NEXT_BLKP(bp)       ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
+#define PREV_BLKP(bp)       ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
+/* Given block ptr bp, set next block's prev_alloc */
+#define SET_ALLOC(bp)       (GET(HDRP(NEXT_BLKP(bp))) |= 0x2)
+#define SET_UNALLOC(bp)     (GET(HDRP(NEXT_BLKP(bp))) &= ~0x2)
 
-/* 每个free list中块的大小范围 */
-#define SIZE1 (1<<4)
-#define SIZE2 (1<<5)
-#define SIZE3 (1<<6)
-#define SIZE4 (1<<7)
-#define SIZE5 (1<<8)
-#define SIZE6 (1<<9)
-#define SIZE7 (1<<10)  		/* 1 KB */
-#define SIZE8 (1<<11)
-#define SIZE9 (1<<12)
-#define SIZE10 (1<<13)
-#define SIZE11 (1<<14)
-#define SIZE12 (1<<15)
-#define SIZE13 (1<<16)
-#define SIZE14 (1<<17)
-#define SIZE15 (1<<18)
-#define SIZE16 (1<<19)
-#define SIZE17 (1<<20) 		/* 1 MB */
+/* Given block ptr bp, get prev_alloc */
+#define GET_PREV_ALLOC(bp)  (GET(HDRP(bp)) & 0x2)
 
-#define LISTS_NUM 18 		/* free list 的数量 */
+/* Given a freed block ptr bp, compute 'address' of next and previous blocks of same size */
+#define NEXT_SAMESZ_BLKP(bp)    (*(unsigned int *)(bp))
+#define PREV_SAMESZ_BLKP(bp)    (*(unsigned int *)((char *)(bp) + WSIZE))
 
-/* Globe var */
-static char *heap_listp;
+#define WNULL 0U
 
-/* 函数声明 */
-static void *extend_heap(size_t words);
-static void *coalesce(void *bp);
-static void *find_fit(size_t asize);
-static void place(void *bp, size_t asize);
-static void insert_list(void *bp);
-int getListOffset(size_t size);
-void delete_list(void *bp);
+/* Convert 4-byte address to 8-byte address */
+static inline block_ptr word_to_ptr(unsigned int w)
+{
+    return ((w) == WNULL ? NULL : (block_ptr)((unsigned int)(w) + 0x800000000UL));
+}
 
-/*********************************************************
- * NOTE TO STUDENTS: Before you do anything else, please
- * provide your team information in the following struct.
- ********************************************************/
-team_t team = {
-        /* Team name */
-        "xzz",
-        /* First member's full name */
-        "xzz",
-        /* First member's email address */
-        "zhezhaoxu@gmail.com",
-        /* Second member's full name (leave blank if none) */
-        "",
-        /* Second member's email address (leave blank if none) */
-        ""
-};
+/* Convert 8-byte address to 4-byte address */
+static inline unsigned int ptr_to_word(block_ptr p)
+{
+    return ((p) == NULL ? WNULL : (unsigned int)((unsigned long)(p) - 0x800000000UL));
+}
 
-/* single word (4) or double word (8) alignment */
-#define ALIGNMENT 8
+/* The following are macros for BST node blocks */
 
-/* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
+/* Check if this block is large enough to be a BST node */
+#define IS_OVER_BST_SIZE(size)  ((size) > DSIZE * fixed_bin_count)
+#define IS_BST_NODE(bp)         (IS_OVER_BST_SIZE(GET_SIZE(HDRP(bp))))
 
+/* Given BST block ptr bp, compute address of its left child or right child */
+#define LCHLD_BLKPREF(bp)       ((block_ptr *)((char *)(bp) + DSIZE))
+#define RCHLD_BLKPREF(bp)       ((block_ptr *)((char *)(bp) + DSIZE * 2))
 
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+/* Crap-like triple pointer > < */
+#define PARENT_CHLDSLOTPREF(bp) ((block_ptr **)((char *)(bp) + DSIZE * 3))
 
-/* 
- * mm_init - initialize the malloc package.
+#define LCHLD_BLKP(bp) (*LCHLD_BLKPREF(bp))
+#define RCHLD_BLKP(bp) (*RCHLD_BLKPREF(bp))
+#define PARENT_CHLDSLOTP(bp) (*PARENT_CHLDSLOTPREF(bp))
+
+/* Reset the fields of a free block bp */
+#define reset_block(bp)                                                     \
+{                                                                           \
+    NEXT_SAMESZ_BLKP(bp) = WNULL;                                           \
+    PREV_SAMESZ_BLKP(bp) = WNULL;                                           \
+    if (IS_BST_NODE(bp))                                                    \
+    {                                                                       \
+        LCHLD_BLKP(bp) = NULL;                                              \
+        RCHLD_BLKP(bp) = NULL;                                              \
+        PARENT_CHLDSLOTP(bp) = NULL;                                        \
+    }                                                                       \
+}
+
+/* Remove bp from its free list */
+#define remove_linked_freed_block(bp)                                               \
+{                                                                                   \
+    if (PREV_SAMESZ_BLKP(bp))                                                       \
+        NEXT_SAMESZ_BLKP(word_to_ptr(PREV_SAMESZ_BLKP(bp))) = NEXT_SAMESZ_BLKP(bp); \
+    if (NEXT_SAMESZ_BLKP(bp))                                                       \
+        PREV_SAMESZ_BLKP(word_to_ptr(NEXT_SAMESZ_BLKP(bp))) = PREV_SAMESZ_BLKP(bp); \
+}
+
+static inline void remove_freed_block(block_ptr bp)
+{
+    if (IS_BST_NODE(bp) && PARENT_CHLDSLOTP(bp))
+    {
+        /* I hate deleting node. */
+        block_ptr l = LCHLD_BLKP(bp), r = RCHLD_BLKP(bp), cur;
+        if ((cur = word_to_ptr(NEXT_SAMESZ_BLKP(bp))))
+        {
+            PARENT_CHLDSLOTP(cur) = PARENT_CHLDSLOTP(bp);
+            *PARENT_CHLDSLOTP(bp) = cur;
+            LCHLD_BLKP(cur) = l;
+            if (l)
+                PARENT_CHLDSLOTP(l) = LCHLD_BLKPREF(cur);
+            RCHLD_BLKP(cur) = r;
+            if (r)
+                PARENT_CHLDSLOTP(r) = RCHLD_BLKPREF(cur);
+        }
+        else if (l && r)
+        {
+            /* Find left-most node in right branch to replace curr */
+            if (!(cur = LCHLD_BLKP(r)))
+            {
+                /* Right child doesn't have lchild */
+                LCHLD_BLKP(r) = l;
+                PARENT_CHLDSLOTP(r) = PARENT_CHLDSLOTP(bp);
+                *PARENT_CHLDSLOTP(bp) = r;
+                PARENT_CHLDSLOTP(l) = LCHLD_BLKPREF(r);
+            }
+            else
+            {
+                while (LCHLD_BLKP(cur))
+                    cur = LCHLD_BLKP(cur);
+                *PARENT_CHLDSLOTP(bp) = cur;
+                *PARENT_CHLDSLOTP(cur) = RCHLD_BLKP(cur);
+                if (RCHLD_BLKP(cur))
+                    PARENT_CHLDSLOTP(RCHLD_BLKP(cur)) = PARENT_CHLDSLOTP(cur);
+                PARENT_CHLDSLOTP(cur) = PARENT_CHLDSLOTP(bp);
+                LCHLD_BLKP(cur) = l;
+                RCHLD_BLKP(cur) = r;
+                PARENT_CHLDSLOTP(l) = LCHLD_BLKPREF(cur);
+                PARENT_CHLDSLOTP(r) = RCHLD_BLKPREF(cur);
+            }
+        }
+        else if (r)
+        {
+            *PARENT_CHLDSLOTP(bp) = r;
+            PARENT_CHLDSLOTP(r) = PARENT_CHLDSLOTP(bp);
+        }
+        else if (l)
+        {
+            *PARENT_CHLDSLOTP(bp) = l;
+            PARENT_CHLDSLOTP(l) = PARENT_CHLDSLOTP(bp);
+        }
+        else
+            *PARENT_CHLDSLOTP(bp) = NULL;
+    }
+    else if (!PREV_SAMESZ_BLKP(bp))
+        /* Remove a free list header from the array of headers */
+        bins[GET_SIZE(HDRP(bp)) / DSIZE - 1] = word_to_ptr(NEXT_SAMESZ_BLKP(bp));
+    remove_linked_freed_block(bp);
+}
+
+/* Function definitions */
+
+/*
+ * bestfit_search - search for a block with requested size or larger in BST.
+ */
+block_ptr *bestfit_search(block_ptr *node, size_t size, int specific)
+{
+    block_ptr *candidate, curr = *node;
+    size_t curr_size;
+
+    if (curr == NULL)
+        return NULL;
+
+    curr_size = GET_SIZE(HDRP(curr));
+
+    if (size < curr_size)
+    {
+        if (specific)
+            return bestfit_search(LCHLD_BLKPREF(curr), size, specific);
+        if ((candidate = bestfit_search(LCHLD_BLKPREF(curr), size, specific)))
+            return candidate;
+        return node;
+    }
+    else if (size > curr_size)
+        return bestfit_search(RCHLD_BLKPREF(curr), size, specific);
+    else
+        return node;
+}
+
+/*
+ * Return whether the pointer is in the heap.
+ * May be useful for debugging.
+ */
+static inline int in_heap(const block_ptr p)
+{
+    return p <= mem_heap_hi() && p >= mem_heap_lo();
+}
+
+/*
+ * Return whether the pointer is aligned.
+ * May be useful for debugging.
+ */
+static inline int aligned(const block_ptr p)
+{
+    return ((unsigned long)p % ALIGNMENT) == 0;
+}
+
+/*
+ * Initialize: return -1 on error, 0 on success.
  */
 int mm_init(void)
 {
-    /* 创建空heap, 前18个WSIZE分别存放18个free list的头指针, 后面的结构与
-     * 书本P863相同 */
-    char *bp;
-    int i;
-
-    if ((heap_listp = mem_sbrk((LISTS_NUM + 4) * WSIZE)) == (void *)-1) {
+    /* Create the initial empty heap */
+    if ((bins = mem_sbrk(
+            ALIGN(fixed_bin_count * sizeof(block_ptr)) +
+            4 * WSIZE)) == (block_ptr)-1)
         return -1;
+    memset(bins, 0, fixed_bin_count * sizeof(block_ptr));
+    heap_listp = (char *)ALIGN((unsigned long)(bins + fixed_bin_count));
+    larger_bin_root = NULL;
+    PUTTRUNC(heap_listp, 0);                            /* Alignment padding */
+    PUTTRUNC(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); /* Prologue header */
+    PUTTRUNC(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
+    PUTTRUNC(heap_listp + (3 * WSIZE), PACK(0, 1));     /* Epilogue header */
+    heap_listp += (2 * WSIZE);
+    SET_ALLOC(heap_listp);
+#ifdef DEBUG
+    {
+        printblock(heap_listp);
+        checkblock(heap_listp);
     }
-    PUT(heap_listp + LISTS_NUM * WSIZE, 0);
-    PUT(heap_listp + (1 + LISTS_NUM) * WSIZE, PACK(DSIZE, 1));
-    PUT(heap_listp + (2 + LISTS_NUM) * WSIZE, PACK(DSIZE, 1));
-    PUT(heap_listp + (3 + LISTS_NUM) * WSIZE, PACK(0, 1));
-
-    for (i = 0; i < LISTS_NUM; i++) {
-        PUT_PTR(heap_listp + WSIZE * i, NULL);
-    }
-
-    /* Extend the empty heap with a free block of CHUNKSIZE bytes */
-    if ((bp = extend_heap(CHUNKSIZE / WSIZE)) == NULL) {
-        return -1;
-    }
-
+    operid = 0;
+#endif
     return 0;
 }
 
 /*
- * 扩展heap的大小
+ * malloc
  */
-void *extend_heap(size_t words)
+block_ptr malloc(size_t size)
 {
-    char *bp;
-    size_t size;
-
-    /* Allocate an even number of words to maintain alignment */
-    size = (words % 2) ? ((words + 1) * WSIZE) : (words * WSIZE);
-    if ((long)(bp = mem_sbrk(size)) == -1) {
-        return NULL;
-    }
-
-    /* Initialize free block header/footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 0)); 		/* Free block header */
-    PUT(FTRP(bp), PACK(size, 0)); 		/* Free block footer */
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); 	/* New epilogue header */
-
-    /* Coalesce if the previous block was free */
-    return coalesce(bp);
-}
-
-
-/*
- * 合并free block 
- */
-void *coalesce(void *bp)
-{
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t size = GET_SIZE(HDRP(bp));
-
-    if (prev_alloc && next_alloc) { 	/* 前后都分配了  */
-        bp = bp;
-    } else if (prev_alloc && !next_alloc) { 	/* 前分配, 后未分配 */
-        delete_list(NEXT_BLKP(bp));
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(bp), PACK(size, 0));
-        PUT(FTRP(bp), PACK(size, 0));
-    } else if (!prev_alloc && next_alloc) { 	/* 前未分配, 后分配 */
-        delete_list(PREV_BLKP(bp));
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-    } else { 				/* 前后都未分配 */
-        delete_list(NEXT_BLKP(bp));
-        delete_list(PREV_BLKP(bp));
-        size = size + GET_SIZE(HDRP(PREV_BLKP(bp))) +
-               GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-    }
-
-    insert_list(bp);
-    return bp;
-}
-
-/* 
- * mm_malloc - Allocate a block by searching the free list.
- *	 Always allocate a block whose size is a multiple of the alignment.
- */
-void *mm_malloc(size_t size)
-{
-    size_t asize; 		/* Adjusted block size */
-    size_t extendsize; 	/* Amount to extend heap if no fit */
+    size_t asize;      /* Adjusted block size */
+    size_t extendsize; /* Amount to extend heap if no fit */
     char *bp;
 
-    /* Igore spurious requests */
-    if (0 == size) {
-        return NULL;
+    if (heap_listp == 0)
+    {
+        mm_init();
     }
 
-    /* Adjusted block size to include overhead and alignment reqs */
-    if (size <= DSIZE) {
+    /* Ignore spurious requests */
+    if (size == 0)
+        return NULL;
+
+
+    /* Adjust block size to include overhead and alignment reqs. */
+    if (size <= DSIZE)
         asize = 2 * DSIZE;
-    } else {
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
-    }
+    else
+        asize = DSIZE * ((size + (WSIZE) + (DSIZE - 1)) / DSIZE);
+
+#ifdef DEBUG
+    printf("\nMalloc request: size = %zu, rounded to %zu \033[41;37m[ID:%d]\033[0m\n", size, asize, operid++);
+#endif
 
     /* Search the free list for a fit */
-    if ((bp = find_fit(asize)) != NULL) {
+    if ((bp = find_fit(asize)) != NULL)
+    {
+#ifdef DEBUG
+        {
+            puts("Found fit!");
+            checkblock(bp);
+            printblock(bp);
+        }
+#endif
         place(bp, asize);
         return bp;
     }
 
     /* No fit found. Get more memory and place the block */
-    extendsize = MAX(asize, CHUNKSIZE);
-    if ((bp = extend_heap(extendsize / WSIZE)) == NULL) {
+    extendsize = MAX(asize, BLOCKSIZE);
+    if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
         return NULL;
-    }
     place(bp, asize);
     return bp;
 }
 
-
 /*
- * getListOffset - 得到大小为size的块应该在哪个list中
+ * free
  */
-int getListOffset(size_t size)
+void free(block_ptr ptr)
 {
-    /*int n;                                                              */
-    /*int tsize;*/
-    /*tsize = size;*/
-    /*n = 0;*/
-    /*if (0 == tsize) {*/
-    /*return 0;*/
-    /*}*/
-    /*while ((tsize = (tsize / 2))) {*/
-    /*++n;*/
-    /*}   */
-    /*if (size != (1 << n)) {*/
-    /*++n; */
-    /*}   */
-    /*if (n < 4) {*/
-    /*return 0;*/
-    /*}*/
-    /*if (n > 20) {*/
-    /*return 17;*/
-    /*}*/
-    /*return (n - 4);*/
-    if (size <= SIZE1) {
-        return 0;
-    } else if (size <= SIZE2) {
-        return 1;
-    } else if (size <= SIZE3) {
-        return 2;
-    } else if (size <= SIZE4) {
-        return 3;
-    } else if (size <= SIZE5) {
-        return 4;
-    } else if (size <= SIZE6) {
-        return 5;
-    } else if (size <= SIZE7) {
-        return 6;
-    } else if (size <= SIZE8) {
-        return 7;
-    } else if (size <= SIZE9) {
-        return 8;
-    } else if (size <= SIZE10) {
-        return 9;
-    } else if (size <= SIZE11) {
-        return 10;
-    } else if (size <= SIZE12) {
-        return 11;
-    } else if (size <= SIZE13) {
-        return 12;
-    } else if (size <= SIZE14) {
-        return 13;
-    } else if (size <= SIZE15) {
-        return 14;
-    } else if (size <= SIZE16) {
-        return 15;
-    } else if (size <= SIZE17) {
-        return 16;
-    } else {
-        return 17;
-    }
-}
-
-/*
- * insert_list - 将free block插入到相应大小的free list中, 插入位置为表头
- */
-void insert_list(void *bp)
-{
-    int index;
+    block_ptr tmp;
     size_t size;
-    size = GET_SIZE(HDRP(bp));
-    index = getListOffset(size);
+    if (!ptr || !in_heap(ptr) || !aligned(ptr))
+        return;
 
-    if (GET_PTR(heap_listp + WSIZE * index) == NULL) {
-        PUT_PTR(heap_listp + WSIZE * index, bp);
-        PUT_PTR(bp, NULL);
-        PUT_PTR((unsigned int *)bp + 1, NULL);
-    } else {
-        PUT_PTR(bp, GET_PTR(heap_listp + WSIZE * index));
-        PUT_PTR(GET_PTR(heap_listp + WSIZE * index) + 1, bp);  	/* 修改前一个位置 */
-        PUT_PTR((unsigned int *)bp + 1, NULL);
-        PUT_PTR(heap_listp + WSIZE * index, bp);
+#ifdef DEBUG
+    {
+        printf("\nFree request: ptr = %p \033[41;37m[ID:%d]\033[0m\n", ptr, operid++);
+        printblock(ptr);
     }
-}
+#endif
 
-/* 
- * delete_list - 删除链表结点
- */
-void delete_list(void *bp)
-{
-    int index;
-    size_t size;
-    size = GET_SIZE(HDRP(bp));
-    index = getListOffset(size);
-    if (GET_PTR(bp) == NULL && GET_PTR((unsigned int *)bp + 1) == NULL) {
-        /* 链表中唯一结点 */
-        PUT_PTR(heap_listp + WSIZE * index, NULL);
-    } else if (GET_PTR(bp) == NULL && GET_PTR((unsigned int *)bp + 1) != NULL) {
-        /* 链表中最后一个结点, 不是唯一一个 */
-        PUT_PTR(GET_PTR((unsigned int *)bp + 1), NULL);
-    } else if (GET_PTR(bp) != NULL && GET_PTR((unsigned int *)bp + 1) == NULL){
-        /* 链表中第一个结点, 不是唯一一个 */
-        PUT_PTR(heap_listp + WSIZE * index, GET_PTR(bp));
-        PUT_PTR(GET_PTR(bp) + 1, NULL);
-    } else if (GET_PTR(bp) != NULL && GET_PTR((unsigned int *)bp + 1) != NULL) {
-        /* 链表中的中间结点 */
-        PUT_PTR(GET_PTR((unsigned int *)bp + 1), GET_PTR(bp));
-        PUT_PTR(GET_PTR(bp) + 1, GET_PTR((unsigned int*)bp + 1));
-    }
-}
-
-/*
- * find_fit - Search the free list for a fit 
- */
-void *find_fit(size_t asize)
-{
-    int index;
-    index = getListOffset(asize);
-    unsigned int *ptr;
-
-    /* 小的class内找不到就到大的class内找 */
-    while (index < 18) {
-        ptr = GET_PTR(heap_listp + 4 * index);
-        while (ptr != NULL) {
-            if (GET_SIZE(HDRP(ptr)) >= asize) {
-                return (void *)ptr;
-            }
-            ptr = GET_PTR(ptr);
-        }
-        index++;
-    }
-
-    return NULL;
-}
-
-/*
- * place - place the requested block at the beginning of the free block
- */
-void place(void *bp, size_t asize)
-{
-    size_t csize = GET_SIZE(HDRP(bp));
-    delete_list(bp);
-    if ((csize - asize) >= (2 * DSIZE)) {
-        PUT(HDRP(bp), PACK(asize, 1));
-        PUT(FTRP(bp), PACK(asize, 1));
-        bp = NEXT_BLKP(bp);
-        PUT(HDRP(bp), PACK(csize - asize, 0));
-        PUT(FTRP(bp), PACK(csize - asize, 0));
-        insert_list(bp);
-    } else {
-        PUT(HDRP(bp), PACK(csize, 1));
-        PUT(FTRP(bp), PACK(csize, 1));
-    }
-}
-
-/*
- * mm_free - Freeing a block.
- */
-void mm_free(void *ptr)
-{
-    size_t size = GET_SIZE(HDRP(ptr));
-
+    size = GET_SIZE(HDRP(ptr));
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
-    coalesce(ptr);
+    SET_UNALLOC(ptr);
+    reset_block(ptr);
+    tmp = coalesce(ptr);
+    insert_free_block(tmp, GET_SIZE(HDRP(tmp)));
 }
 
-
 /*
- * mm_realloc - 直接用malloc和free组合实现
+ * realloc - I don't want to look at mm-naive.c
  */
-void *mm_realloc(void *ptr, size_t size)
+block_ptr realloc(block_ptr oldptr, size_t size)
 {
-    size_t asize;
-    void *oldptr = ptr;
-    void *newptr;
+    size_t oldsize;
+    block_ptr newptr;
 
-    /* free */
-    if (0 == size) {
+    /* If size == 0 then this is just free, and we return NULL. */
+    if (size == 0)
+    {
         free(oldptr);
-        return NULL;
+        return 0;
     }
 
-
-    if (size <= DSIZE) {
-        asize = 2 * DSIZE;
-    } else {
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
+    /* If oldptr is NULL, then this is just malloc. */
+    if (oldptr == NULL)
+    {
+        return malloc(size);
     }
 
-    if (asize == GET_SIZE(HDRP(oldptr))) {
-        return oldptr;
+    newptr = malloc(size);
+
+    /* If realloc() fails the original block is left untouched  */
+    if (!newptr)
+    {
+        return 0;
     }
 
-    /* 缩小空间 */
-    if (asize < GET_SIZE(HDRP(oldptr))) {
-        newptr = mm_malloc(size);
-        memmove(newptr, oldptr, size);
-        mm_free(oldptr);
+    /* Copy the old data. */
+    oldsize = GET_SIZE(HDRP(oldptr));
+    if (size < oldsize)
+        oldsize = size;
+    memcpy(newptr, oldptr, oldsize);
 
-        return newptr;
-    }
-
-
-    /* 扩大空间, 先检测其前后相邻的块是否满足扩大需求 */
-    /* 试了之后效果不明显 */
-    /*if (!GET_ALLOC(HDRP(NEXT_BLKP(oldptr))) && GET_ALLOC(HDRP(PREV_BLKP(oldptr))) &&*/
-    /*GET_SIZE(HDRP(oldptr)) + GET_SIZE(HDRP(NEXT_BLKP(oldptr))) >= asize) {*/
-    /*[> 可与后面的块合并 <]*/
-    /*delete_list(NEXT_BLKP(oldptr));*/
-    /*csize = GET_SIZE(HDRP(oldptr)) + GET_SIZE(HDRP(NEXT_BLKP(oldptr)));*/
-    /*PUT(HDRP(oldptr), PACK(csize, 0));	*/
-    /*PUT(FTRP(oldptr), PACK(csize, 0));*/
-    /*newptr = oldptr;*/
-    /*if ((csize - asize) >= (2 * DSIZE)) {*/
-    /*PUT(HDRP(oldptr), PACK(asize, 1));	*/
-    /*PUT(FTRP(oldptr), PACK(asize, 1));*/
-    /*oldptr = NEXT_BLKP(oldptr);*/
-    /*PUT(HDRP(oldptr), PACK(csize - asize, 0));*/
-    /*PUT(FTRP(oldptr), PACK(csize - asize, 0));*/
-    /*insert_list(oldptr);*/
-    /*} else {*/
-    /*PUT(HDRP(oldptr), PACK(csize, 1));*/
-    /*PUT(FTRP(oldptr), PACK(csize, 1));*/
-    /*}*/
-
-    /*return newptr;*/
-    /*}*/
-
-    /* 从heap的其他地方寻找 */
-    newptr = mm_malloc(size);
-    if (NULL == newptr)
-        return NULL;
-    memmove(newptr, oldptr, size);
-    mm_free(oldptr);
+    /* Free the old block. */
+    free(oldptr);
 
     return newptr;
+}
+
+/*
+ * calloc - I don't want to look at mm-naive.c
+ * This function is not tested by mdriver, but it is
+ * needed to run the traces.
+ */
+block_ptr calloc(size_t nmemb, size_t size)
+{
+    size_t bytes = nmemb * size;
+    block_ptr newptr;
+
+    newptr = malloc(bytes);
+    memset(newptr, 0, bytes);
+
+    return newptr;
+}
+
+/*
+ * coalesce - Boundary tag coalescing. Return ptr to coalesced block
+ */
+static block_ptr coalesce(block_ptr bp)
+{
+    /*
+     * TODO Here is the bug: Do update the bins while doing this.
+     * Tried to fix. Not sure what will happen.
+     */
+    block_ptr prev, next = NEXT_BLKP(bp);
+
+    /* Use GET_PREV_ALLOC to judge if prev block is allocated */
+    size_t prev_alloc = GET_PREV_ALLOC(bp);
+    size_t next_alloc = GET_ALLOC(HDRP(next));
+    size_t size = GET_SIZE(HDRP(bp));
+
+    if (prev_alloc && next_alloc)            /* Case 1 */
+    {
+        return bp;
+    }
+
+    else if (prev_alloc && !next_alloc)      /* Case 2 */
+    {
+        remove_freed_block(next);
+        size += GET_SIZE(HDRP(next));
+        PUT(HDRP(bp), PACK(size, 0));
+        PUT(FTRP(bp), PACK(size, 0));
+    }
+
+    else if (!prev_alloc && next_alloc)       /* Case 3 */
+    {
+        prev = PREV_BLKP(bp);
+        remove_freed_block(prev);
+        size += GET_SIZE(HDRP(prev));
+        PUT(FTRP(bp), PACK(size, 0));
+        PUT(HDRP(prev), PACK(size, 0));
+        bp = prev;
+    }
+
+    else                                      /* Case 4 */
+    {
+        prev = PREV_BLKP(bp);
+        remove_freed_block(next);
+        remove_freed_block(prev);
+        size += GET_SIZE(HDRP(prev)) + GET_SIZE(FTRP(next));
+        PUT(HDRP(prev), PACK(size, 0));
+        PUT(FTRP(next), PACK(size, 0));
+        bp = prev;
+    }
+    reset_block(bp);
+    // insert_free_block(bp, size);
+    return bp;
+}
+
+/*
+ * extend_heap - Extend heap with free block and return its block pointer
+ */
+static block_ptr extend_heap(size_t words)
+{
+    char *bp;
+    size_t size;
+
+    /* Allocate an even number of words to maintain alignment */
+    size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
+    if ((long)(bp = mem_sbrk(size)) == -1)
+        return NULL;
+
+#ifdef DEBUG
+        printf("\nExtended the heap by %zu words.\n", words);
+#endif
+
+    /* Initialize free block header/footer and the epilogue header */
+    PUT(HDRP(bp), PACK(size, 0));           /* Free block header */
+    PUT(FTRP(bp), PACK(size, 0));           /* Free block footer */
+    reset_block(bp);
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));   /* New epilogue header */
+
+    /* Coalesce if the previous block was free */
+    return coalesce(bp);
+}
+
+/*
+ * place - Place block of asize bytes at start of free block bp
+ *       and split if remainder would be at least minimum block size
+ */
+static void place(block_ptr bp, size_t asize)
+{
+    size_t csize = GET_SIZE(HDRP(bp)), delta = csize - asize;
+
+    if (delta >= (2 * DSIZE))
+    {
+        PUT(HDRP(bp), PACK(asize, 1));
+        PUT(FTRP(bp), PACK(asize, 1));
+        SET_ALLOC(bp);
+        bp = NEXT_BLKP(bp);
+        PUT(HDRP(bp), PACK(delta, 0));
+        PUT(FTRP(bp), PACK(delta, 0));
+        SET_UNALLOC(bp);
+        reset_block(bp);
+        insert_free_block(bp, delta);
+#ifdef DEBUG
+        {
+            printf("Block with size %zu remains a block:\n", asize);
+            printblock(bp);
+        }
+#endif
+    }
+    else
+    {
+        PUT(HDRP(bp), PACK(csize, 1));
+        PUT(FTRP(bp), PACK(csize, 1));
+        SET_ALLOC(bp);
+    }
+}
+
+/*
+ * insert_free_block - insert a block into BST or segregated free list
+ * BLOCKSIZE should be duplicate of double word
+ */
+static void insert_free_block(block_ptr bp, size_t blocksize)
+{
+    block_ptr *new = &larger_bin_root, parent = NULL;
+
+    if (!IS_OVER_BST_SIZE(blocksize))
+    {
+        /* Insert into segregated free list */
+        size_t dcount = blocksize / DSIZE;
+        if (bins[dcount - 1])
+        {
+            /* Connect it before the existing block as a new header */
+            NEXT_SAMESZ_BLKP(bp) = ptr_to_word(bins[dcount - 1]);
+            PREV_SAMESZ_BLKP(bins[dcount - 1]) = ptr_to_word(bp);
+        }
+        PREV_SAMESZ_BLKP(bp) = WNULL;
+        bins[dcount - 1] = bp;
+        return;
+    }
+
+    /* Figure out where to put the new node in BST */
+    while (*new)
+    {
+        size_t curr_size = GET_SIZE(HDRP(parent = *new));
+
+        if (blocksize < curr_size)
+            new = LCHLD_BLKPREF(parent);
+        else if (blocksize > curr_size)
+            new = RCHLD_BLKPREF(parent);
+        else
+        {
+            /* MWHAHAHAHAHA */
+            block_ptr next = word_to_ptr(NEXT_SAMESZ_BLKP(bp) = NEXT_SAMESZ_BLKP(parent));
+            if (next)
+                /* Connect it before the existing block as a new header */
+                PREV_SAMESZ_BLKP(next) = ptr_to_word(bp);
+            NEXT_SAMESZ_BLKP(parent) = ptr_to_word(bp);
+            PREV_SAMESZ_BLKP(bp) = ptr_to_word(parent);
+            return;
+        }
+    }
+
+    /* Connect this node as a child */
+    *new = bp;
+    PARENT_CHLDSLOTP(bp) = new;
+#ifdef DEBUG
+    {
+        printf("Inserting a block: ");
+        printblock(bp);
+    }
+#endif
+}
+
+/*
+ * find_fit - Find a fit for a block with asize bytes
+ * asize should be duplicate of double word
+ */
+static block_ptr find_fit(size_t asize)
+{
+    block_ptr curr, *blocks;
+    size_t dcount = asize / DSIZE;
+
+    if (!IS_OVER_BST_SIZE(asize))
+    {
+        if (bins[dcount - 1])
+        {
+            /* Found a free list of this size! */
+            curr = bins[dcount - 1];
+            bins[dcount - 1] = word_to_ptr(NEXT_SAMESZ_BLKP(curr));
+            remove_freed_block(curr);
+            return curr;
+        }
+        /* ...not found? Proceed to BST */
+    }
+
+    if ((blocks = bestfit_search(&larger_bin_root, asize, 0)) == NULL)
+        /* No best-fit found...T T */
+        return NULL;
+
+    curr = *blocks;
+
+    /* Found a best-fit block! LOL */
+#ifdef DEBUG
+    if ((*blocks = word_to_ptr(NEXT_SAMESZ_BLKP(curr))) == NULL)
+    {
+        printf("** All blocks with size %u (request: %zu) deleted.\n", GET_SIZE(HDRP(curr)), asize);
+    }
+#else
+    /* Set the node to the next same size block if it has */
+    *blocks = word_to_ptr(NEXT_SAMESZ_BLKP(curr));
+#endif
+    remove_freed_block(curr);
+    return curr;
+}
+
+/*
+ * printblock - print a block for debugging
+ */
+static inline void printblock(block_ptr bp)
+{
+    size_t hsize, halloc, fsize, falloc;
+
+    hsize = GET_SIZE(HDRP(bp));
+    halloc = GET_ALLOC(HDRP(bp));
+    fsize = GET_SIZE(FTRP(bp));
+    falloc = GET_ALLOC(FTRP(bp));
+
+    if (hsize == 0)
+    {
+        printf("%p: EOL\n", bp);
+        return;
+    }
+    if (halloc)
+        printf("\033[43;37m%p: header: [%zu:%c:%c] footer: -\033[0m\n", bp,
+               hsize, (GET_PREV_ALLOC(bp) ? 'a' : 'f'), (halloc ? 'a' : 'f'));
+    else
+    {
+        printf("\033[42;30m%p: header: [%zu:%c:%c] footer: [%zu:%c]\033[0m", bp,
+               hsize, (GET_PREV_ALLOC(bp) ? 'a' : 'f'), (halloc ? 'a' : 'f'),
+               fsize, (falloc ? 'a' : 'f'));
+        if (IS_BST_NODE(bp))
+            printf("\033[1;44;33m[BST Node| parent slotp: %p, l: %p, r: %p]\033[0m",
+                   PARENT_CHLDSLOTP(bp), LCHLD_BLKP(bp), RCHLD_BLKP(bp));
+        if (PREV_SAMESZ_BLKP(bp))
+            printf("\033[1;33m[PREV] %p\033[0m", word_to_ptr(PREV_SAMESZ_BLKP(bp)));
+        putchar('\n');
+    }
+}
+
+/*
+ * checkblock - as the name goes
+ */
+static inline void checkblock(block_ptr bp)
+{
+    if (!aligned(bp))
+        printf("\n\033[1;47;31m## Error: %p is not doubleword aligned\033[0m\n", bp);
+    if (!GET_ALLOC(HDRP(bp)) && (GET(HDRP(bp)) & ~0x2) != (GET(FTRP(bp)) & ~0x2))
+        printf("\n\033[1;47;31m## Error: header does not match footer, header: %u, footer: %u \033[0m\n",
+               GET(HDRP(bp)), GET(FTRP(bp)));
+    if (GET_ALLOC(HDRP(bp)) != (GET_PREV_ALLOC(NEXT_BLKP(bp)) >> 1))
+        printf("\n\033[1;47;31m## Error: %p allocation does not match next block's prev_alloc\033[0m\n", bp);
+}
+
+static void printchain(block_ptr node)
+{
+    while (node)
+    {
+        printblock(node);
+        printf("->");
+        node = word_to_ptr(NEXT_SAMESZ_BLKP(node));
+    }
+}
+
+static void printtree(block_ptr node, int depth)
+{
+    int i;
+    if (node == NULL)
+        return;
+    printf("BST: ");
+    for (i = 0; i < depth; i++)
+        putchar('-');
+    printchain(node);
+    putchar('\n');
+    printtree(LCHLD_BLKP(node), depth + 1);
+    printtree(RCHLD_BLKP(node), depth + 1);
+}
+
+static void checklist(block_ptr node)
+{
+    if (node == NULL)
+        return;
+    if (PREV_SAMESZ_BLKP(node) &&
+        word_to_ptr(NEXT_SAMESZ_BLKP(word_to_ptr(PREV_SAMESZ_BLKP(node)))) != node)
+        printf("\n\033[1;47;31m## Bad neighbor pointer: %p\033[0m\n", node);
+    checklist(word_to_ptr(NEXT_SAMESZ_BLKP(node)));
+}
+
+static void checktree(block_ptr node)
+{
+    if (node == NULL)
+        return;
+    if (*PARENT_CHLDSLOTP(node) != node)
+        printf("\n\033[1;47;31m## Bad parent pointer: %p\033[0m\n", node);
+    checklist(node);
+    checktree(LCHLD_BLKP(node));
+    checktree(RCHLD_BLKP(node));
+}
+
+/*
+ * checkheap - check the heap for consistency
+ */
+void mm_checkheap(int verbose)
+{
+    char *bp = heap_listp;
+
+    if (verbose)
+        printf("Heap (%p):\n", heap_listp);
+
+    if ((GET_SIZE(HDRP(heap_listp)) != DSIZE) || !GET_ALLOC(HDRP(heap_listp)))
+        printf("\n\033[1;47;31m## Bad prologue header\033[0m\n");
+    checkblock(heap_listp);
+
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    {
+        if (verbose)
+            printblock(bp);
+        checkblock(bp);
+    }
+
+    if (verbose)
+    {
+        printblock(bp);
+        {
+            unsigned int i;
+            for (i = 1; i <= fixed_bin_count; i++)
+                if (bins[i - 1])
+                {
+                    printf("BIN #%d: size = %d ", i, i * DSIZE);
+                    checklist(bins[i - 1]);
+                    printchain(bins[i - 1]);
+                }
+            putchar('\n');
+            checktree(larger_bin_root);
+            printtree(larger_bin_root, 0);
+        }
+    }
+    if ((GET_SIZE(HDRP(bp)) != 0) || !(GET_ALLOC(HDRP(bp))))
+        printf("\n\033[1;47;31m## Bad epilogue header\033[0m\n");
 }
