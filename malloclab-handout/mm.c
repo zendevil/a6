@@ -59,7 +59,7 @@ team_t team = {
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
-
+#define PACK(size, alloc) ((size) | (alloc))
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 static char *heap_listp = 0;
