@@ -62,7 +62,7 @@ team_t team = {
 #define PACK(size, alloc) ((size) | (alloc))
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
-static char *heap_listp = 0;
+static char *heap_listp;
 
 static void *coalesce(void * bp)
 {
