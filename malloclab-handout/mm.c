@@ -41,6 +41,37 @@ static block_ptr find_fit(size_t asize);
 static void printtree(block_ptr node, int depth);
 #endif
 
+/*
+ * mm-naive.c - The fastest, least memory-efficient malloc package.
+ *
+ * In this naive approach, a block is allocated by simply incrementing
+ * the brk pointer.  A block is pure payload. There are no headers or
+ * footers.  Blocks are never coalesced or reused. Realloc is
+ * implemented directly using mm_malloc and mm_free.
+ *
+ * NOTE TO STUDENTS: Replace this header comment with your own header
+ * comment that gives a high level description of your solution.
+ */
+
+
+/*********************************************************
+ * NOTE TO STUDENTS: Before you do anything else, please
+ * provide your team information in the following struct.
+ ********************************************************/
+team_t team = {
+        /* Team name */
+        "Bois",
+        /* First member's full name */
+        "Prikshet",
+        /* First member's email address */
+        "pshar10@u.rochester.edu",
+        /* Second member's full name (leave blank if none) */
+        "Nathan McCloud",
+        /* Second member's email address (leave blank if none) */
+        "nmccloud@u.rochester.edu"
+};
+
+
 /* Macros and utility inline functions */
 
 /* Single word (4) or double word (8) alignment */
