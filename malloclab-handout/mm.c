@@ -14,10 +14,8 @@
 /* do not change the following! */
 #ifdef DRIVER
 /* create aliases for driver tests */  
-#define malloc mm_malloc  
-#define free mm_free  
-#define realloc mm_realloc  
-#define calloc mm_calloc  
+
+
 #endif /* def DRIVER */
 
 typedef void *block_ptr;
@@ -285,7 +283,7 @@ int mm_init(void)
 /* 
  * malloc 
  */
-block_ptr malloc(size_t size)
+block_ptr mm_malloc(size_t size)
 {
     size_t asize;      /* Adjusted block size */
     size_t extendsize; /* Amount to extend heap if no fit */
@@ -336,7 +334,7 @@ block_ptr malloc(size_t size)
 /* 
  * free 
  */
-void free(block_ptr ptr)
+void mm_free(block_ptr ptr)
 {
     block_ptr tmp;
     size_t size;
@@ -360,9 +358,9 @@ void free(block_ptr ptr)
 }
 
 /* 
- * realloc - I don't want to look at mm-naive.c 
+ * mm_realloc - I don't want to look at mm-naive.c
  */
-block_ptr realloc(block_ptr oldptr, size_t size)
+block_ptr mm_realloc(block_ptr oldptr, size_t size)
 {
     size_t oldsize;
     block_ptr newptr;
@@ -370,19 +368,19 @@ block_ptr realloc(block_ptr oldptr, size_t size)
     /* If size == 0 then this is just free, and we return NULL. */
     if (size == 0)
     {
-        free(oldptr);
+        mm_free(oldptr);
         return 0;
     }
 
     /* If oldptr is NULL, then this is just malloc. */
     if (oldptr == NULL)
     {
-        return malloc(size);
+        return mm_malloc(size);
     }
 
-    newptr = malloc(size);
+    newptr = mm_malloc(size);
 
-    /* If realloc() fails the original block is left untouched  */
+    /* If mm_realloc() fails the original block is left untouched  */
     if (!newptr)
     {
         return 0;
@@ -395,26 +393,12 @@ block_ptr realloc(block_ptr oldptr, size_t size)
     memcpy(newptr, oldptr, oldsize);
 
     /* Free the old block. */
-    free(oldptr);
+    mm_free(oldptr);
 
     return newptr;
 }
 
-/* 
- * calloc - I don't want to look at mm-naive.c 
- * This function is not tested by mdriver, but it is 
- * needed to run the traces. 
- */
-block_ptr calloc(size_t nmemb, size_t size)
-{
-    size_t bytes = nmemb * size;
-    block_ptr newptr;
 
-    newptr = malloc(bytes);
-    memset(newptr, 0, bytes);
-
-    return newptr;
-}
 
 /* 
  * coalesce - Boundary tag coalescing. Return ptr to coalesced block 
