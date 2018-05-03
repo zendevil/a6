@@ -122,21 +122,21 @@ team_t team = {
 
 #define WNULL 0U
 
-/* Convert 4-byte address to 8-byte address */
-static inline block_ptr word_to_ptr(unsigned int w)
+/* 4-byte address to 8-byte address */
+static block_ptr word_to_ptr(unsigned int w)
 {
     return ((w) == WNULL ? NULL : (block_ptr)((unsigned int)(w) + 0x800000000UL));
 }
 
-/* Convert 8-byte address to 4-byte address */
-static inline unsigned int ptr_to_word(block_ptr p)
+/* 8-byte address to 4-byte address */
+static unsigned int ptr_to_word(block_ptr p)
 {
     return ((p) == NULL ? WNULL : (unsigned int)((unsigned long)(p) - 0x800000000UL));
 }
 
-/* The following are macros for BST node blocks */
+//Macros for implementing the binary search tree
 
-/* Check if this block is large enough to be a BST node */
+//Check if this block is large enough to be a BST node */
 #define IS_OVER_BST_SIZE(size)  ((size) > DSIZE * fixed_bin_count)
 #define IS_BST_NODE(bp)         (IS_OVER_BST_SIZE(GET_SIZE(HDRP(bp))))
 
@@ -177,7 +177,7 @@ static inline void remove_freed_block(block_ptr bp)
 {
     if (IS_BST_NODE(bp) && PARENT_CHLDSLOTP(bp))
     {
-        /* I hate deleting node. */
+        //deleting node.
         block_ptr l = LCHLD_BLKP(bp), r = RCHLD_BLKP(bp), cur;
         if ((cur = word_to_ptr(NEXT_SAMESZ_BLKP(bp))))
         {
@@ -436,10 +436,7 @@ block_ptr mm_realloc(block_ptr oldptr, size_t size)
  */
 static block_ptr coalesce(block_ptr bp)
 {
-    /*  
-     * TODO Here is the bug: Do update the bins while doing this. 
-     * Tried to fix. Not sure what will happen. 
-     */
+
     block_ptr prev, next = NEXT_BLKP(bp);
 
     /* Use GET_PREV_ALLOC to judge if prev block is allocated */
