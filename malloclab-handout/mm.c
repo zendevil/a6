@@ -217,7 +217,7 @@ static void *extend_heap(size_t words) {
 
     /* Allocate an even number of words to maintain alignment */
     size = (words % 2) ? (words+1) *WSIZE : (words *WSIZE);
-    if((long) ((long) bp = mem_sbrk(size)) == -1) {
+    if ((long)(bp = mem_sbrk(size)) == -1) {
         return NULL;
     }
 
