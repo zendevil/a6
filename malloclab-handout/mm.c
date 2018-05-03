@@ -128,7 +128,7 @@ static void *extend_heap(size_t words) {
 /* CSAPP Pg. 585*/
 int mm_init(void)
 {
-    *heap_listp = 0;
+
     /* create the initial empty heap */
     if((heap_listp = mem_sbrk(4*WSIZE)) == (void*) -1)
         return -1;
