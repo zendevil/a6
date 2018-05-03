@@ -123,25 +123,25 @@ static inline unsigned int ptr_to_word(block_ptr p)
 #define PARENT_CHLDSLOTP(bp) (*PARENT_CHLDSLOTPREF(bp))
 
 /* Reset the fields of a free block bp */
-#define reset_block(bp)                                                     \  
-{                                                                           \  
-    NEXT_SAMESZ_BLKP(bp) = WNULL;                                           \  
-    PREV_SAMESZ_BLKP(bp) = WNULL;                                           \  
-    if (IS_BST_NODE(bp))                                                    \  
-    {                                                                       \  
-        LCHLD_BLKP(bp) = NULL;                                              \  
-        RCHLD_BLKP(bp) = NULL;                                              \  
-        PARENT_CHLDSLOTP(bp) = NULL;                                        \  
-    }                                                                       \  
+#define reset_block(bp)                                                     \
+{                                                                           \
+    NEXT_SAMESZ_BLKP(bp) = WNULL;                                           \
+    PREV_SAMESZ_BLKP(bp) = WNULL;                                           \
+    if (IS_BST_NODE(bp))                                                    \
+    {                                                                       \
+        LCHLD_BLKP(bp) = NULL;                                              \
+        RCHLD_BLKP(bp) = NULL;                                              \
+        PARENT_CHLDSLOTP(bp) = NULL;                                        \
+    }                                                                       \
 }
 
 /* Remove bp from its free list */
-#define remove_linked_freed_block(bp)                                               \  
-{                                                                                   \  
-    if (PREV_SAMESZ_BLKP(bp))                                                       \  
-        NEXT_SAMESZ_BLKP(word_to_ptr(PREV_SAMESZ_BLKP(bp))) = NEXT_SAMESZ_BLKP(bp); \  
-    if (NEXT_SAMESZ_BLKP(bp))                                                       \  
-        PREV_SAMESZ_BLKP(word_to_ptr(NEXT_SAMESZ_BLKP(bp))) = PREV_SAMESZ_BLKP(bp); \  
+#define remove_linked_freed_block(bp)                                               \
+{                                                                                   \
+    if (PREV_SAMESZ_BLKP(bp))                                                       \
+        NEXT_SAMESZ_BLKP(word_to_ptr(PREV_SAMESZ_BLKP(bp))) = NEXT_SAMESZ_BLKP(bp); \
+    if (NEXT_SAMESZ_BLKP(bp))                                                       \
+        PREV_SAMESZ_BLKP(word_to_ptr(NEXT_SAMESZ_BLKP(bp))) = PREV_SAMESZ_BLKP(bp); \
 }
 
 static inline void remove_freed_block(block_ptr bp)
